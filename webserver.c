@@ -51,13 +51,17 @@ int main(void) {
         }
         buf[nbyte] = '\0';
 
-        // HTTP response 헤더 : 200 상태코드 및 내용 타입(html) 전달
-        char header[] = "HTTP/1.0 200 OK\r\nContent-Type: text/html\r\n\r\n";
-        write(accp_sock, header, strlen(header));
+        
         // htdocs 폴더 안의 index.html 파일을 읽기 전용으로 연다.
         FILE *fp = fopen("htdocs/index.html", "r");
         // 파일이 존재한다면
         if(fp) {
+            // HTTP response 헤더 : 200 상태코드 및 내용 타입(html) 전달
+            char header[] = 
+                "HTTP/1.0 200 OK"
+                "\r\nContent-Type: text/html\r\n"
+                "\r\n";
+            write(accp_sock, header, strlen(header));
             // 512바이트짜리 임시 바구니
             char file_buf[512];
             // fp에서 512바이트만큼 읽은 후 전달 -> 성공하면 주소, 실패하면 NULL
@@ -66,6 +70,14 @@ int main(void) {
             }
             // 파일 닫기
             fclose(fp);
+        }
+        else{
+            char header_404[] = 
+            "HTTP/1.0 404 NOT FOUND\r\n"
+            "Content-Type: text/html\r\n"
+            "\r\n"
+            "<html><body><h1>404 Not Found</h1><p>파일이 없습니다!</p></body></html>";
+            write(accp_sock, header_404, strlen(header_404));
         }
 
 

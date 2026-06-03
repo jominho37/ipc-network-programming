@@ -59,12 +59,48 @@ Accept-Language: ko-KR,ko;q=0.9,en-US;q=0.8
 
 ## HTTP 응답
 
-```
-HTTP/1.0 200 OK
-Content-Type: text/html
+HTTP 응답 메시지는 **상태 라인 + 헤더 + 빈 줄 + 본문**으로 구성된다.
 
-(index.html 내용)
 ```
+HTTP/1.0 [상태코드] [상태메시지]\r\n
+Content-Type: text/html\r\n
+\r\n
+(본문)
+```
+
+### 주요 상태 코드
+
+| 상태코드 | 상태메시지 | 설명 |
+|:---:|:---:|:---|
+| 200 | OK | 요청 성공. 요청한 리소스를 정상적으로 반환 |
+| 404 | Not Found | 요청한 리소스가 서버에 존재하지 않음 |
+
+### 200 OK 응답 예시
+
+클라이언트가 존재하는 파일을 요청했을 때:
+
+```
+HTTP/1.0 200 OK\r\n
+Content-Type: text/html\r\n
+\r\n
+<!DOCTYPE html>
+<html>
+...index.html 내용...
+</html>
+```
+
+### 404 Not Found 응답 예시
+
+클라이언트가 존재하지 않는 파일을 요청했을 때 (예: `GET /about.html`):
+
+```
+HTTP/1.0 404 Not Found\r\n
+Content-Type: text/html\r\n
+\r\n
+<html><body><h1>404 Not Found</h1></body></html>
+```
+
+> 현재 Version 1에서는 모든 요청에 `200 OK`로 `index.html`을 반환하며, 404 처리는 구현되어 있지 않다.
 
 ## 컴파일 및 실행
 
