@@ -17,18 +17,39 @@
 
 C언어 소켓 프로그래밍을 이용하여 간단한 정적 웹 서버를 구현한다.
 
-## 개요
-
-- 클라이언트(브라우저)의 HTTP 요청을 파싱하여 요청 경로에 맞는 파일을 응답으로 전달하는 정적 웹 서버
 - Iterative 방식 (멀티스레드/멀티프로세스 없이 순차 처리)
-- 포트번호 : `4000`
+- 클라이언트 요청 시 `htdocs/index.html`을 응답으로 전달
+- HTTP 요청 파싱 : method와 URL을 분리하여 경로별 파일 제공
 - `SO_REUSEADDR` 옵션으로 서버 재시작 시 포트 즉시 재사용 가능
+- 파일이 없으면 `404 Not Found` 응답
+
+---
+
+# Version 2 : 멀티스레드 서버 만들기
+
+Iterative 방식에서 `pthread`를 이용한 멀티스레드 방식으로 전환한다.
+
+- `pthread_create`로 클라이언트 연결마다 새 스레드(`read_and_response`) 생성
+- `pthread_detach`로 스레드 자원 자동 회수
+- 동시에 여러 클라이언트 요청 처리 가능
+
+---
+
+# Version 3 : UDS를 이용한 동적 HTML 처리가 가능한 서버 만들기
+
+URL에 쿼리 스트링(`?`)이 포함된 경우, UDS(Unix Domain Socket)를 통해 `web_app_server`에 동적 HTML 생성을 요청한다.
+
+- `webserver`는 UDS 클라이언트로서 `web_app_server`에 URL을 전달
+- `web_app_server`는 UDS 서버로서 쿼리 스트링에서 `color=` 값을 추출하여 배경색이 적용된 동적 HTML 생성
+- UDS 소켓 경로 : `/tmp/dynamic_html_create.sock`
+- UDS 연결 실패 시 `500 Internal Server Error` 응답
 
 ## 프로젝트 구조
 
 ```
 network_assignment/
-├── webserver.c          # 웹 서버 소스 코드
+├── webserver.c          # 멀티스레드 웹 서버 (UDS 클라이언트)
+├── web_app_server.c     # UDS 기반 동적 HTML 생성 서버
 ├── Makefile             # 빌드 설정 파일
 ├── htdocs/
 │   └── index.html       # 클라이언트에 전달할 HTML 파일
@@ -36,82 +57,19 @@ network_assignment/
 └── README.md
 ```
 
-## 동작 흐름
+## HTTP 요청/응답
 
-1. **소켓 생성** : `socket(PF_INET, SOCK_STREAM, 0)`으로 TCP 소켓 생성
-2. **소켓 옵션** : `SO_REUSEADDR` 설정으로 TIME_WAIT 상태의 포트 재사용 허용
-3. **bind** : 서버 주소 구조체(`sockaddr_in`)와 소켓을 바인딩 (포트 4000)
-4. **listen** : 연결 요청 대기 (backlog = 5)
-5. **accept** : 클라이언트 연결 수락
-6. **요청 파싱** : HTTP 요청 첫 줄에서 method와 URL을 분리 (`GET /index.html HTTP/1.0`)
-7. **경로 매핑** : `/` 요청은 `/index.html`로 매핑, URL을 `htdocs` 하위 경로로 변환
-8. **헤더 소비** : 나머지 헤더를 빈 줄(`\r\n`)까지 읽어서 전부 소비
-9. **응답 전송** : 파일이 존재하면 `200 OK` + 파일 내용, 없으면 `404 Not Found` 응답
-10. **close** : 연결 종료 후 다시 accept 대기
-
-## HTTP 요청 예시
-
-```
-GET / HTTP/1.0
-Host: localhost:4000
-Connection: keep-alive
-User-Agent: Mozilla/5.0 ...
-Accept: text/html,application/xhtml+xml,...
-Accept-Encoding: gzip, deflate, br
-Accept-Language: ko-KR,ko;q=0.9,en-US;q=0.8
-(빈 줄)
-```
-
-## HTTP 응답
-
-HTTP 응답 메시지는 **상태 라인 + 헤더 + 빈 줄 + 본문**으로 구성된다.
-
-```
-HTTP/1.0 [상태코드] [상태메시지]\r\n
-Content-Type: text/html\r\n
-\r\n
-(본문)
-```
-
-### 주요 상태 코드
-
-| 상태코드 | 상태메시지 | 설명 |
-|:---:|:---:|:---|
-| 200 | OK | 요청 성공. 요청한 리소스를 정상적으로 반환 |
-| 404 | Not Found | 요청한 리소스가 서버에 존재하지 않음 |
-
-### 200 OK 응답 예시
-
-클라이언트가 존재하는 파일을 요청했을 때:
-
-```
-HTTP/1.0 200 OK\r\n
-Content-Type: text/html\r\n
-\r\n
-<!DOCTYPE html>
-<html>
-...index.html 내용...
-</html>
-```
-
-### 404 Not Found 응답 예시
-
-클라이언트가 존재하지 않는 파일을 요청했을 때 (예: `GET /about.html`):
-
-```
-HTTP/1.0 404 Not Found\r\n
-Content-Type: text/html\r\n
-\r\n
-<html><body><h1>404 Not Found</h1></body></html>
-```
-
-> 현재 Version 1에서는 모든 요청에 `200 OK`로 `index.html`을 반환하며, 404 처리는 구현되어 있지 않다.
+HTTP 요청 및 응답의 구조, 상태 코드, 정적/동적 예시는 [HTTP_request.md](HTTP_request.md)를 참고한다.
 
 ## 컴파일 및 실행
 
 ```bash
-gcc -o webserver webserver.c
+make
+./web_app_server &
 ./webserver
 ```
 
-실행 후 브라우저에서 `http://localhost:4000` 으로 접속하면 `index.html` 페이지가 표시된다.
+- `make` : `webserver`와 `web_app_server` 모두 컴파일
+- `web_app_server`를 먼저 백그라운드로 실행한 뒤 `webserver`를 실행
+- 브라우저에서 `http://localhost:4000` 접속 → 정적 HTML 응답
+- 브라우저에서 `http://localhost:4000/?color=red` 접속 → 동적 HTML 응답 (배경색 변경)
