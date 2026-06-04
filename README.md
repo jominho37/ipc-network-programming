@@ -44,16 +44,27 @@ URL에 쿼리 스트링(`?`)이 포함된 경우, UDS(Unix Domain Socket)를 통
 - UDS 소켓 경로 : `/tmp/dynamic_html_create.sock`
 - UDS 연결 실패 시 `500 Internal Server Error` 응답
 
+---
+
+# Version 4 : Prefork 워커 프로세스 풀 방식으로 전환
+
+`web_app_server`를 매니저 + 워커 3개의 prefork 프로세스 풀 구조로 전환한다.
+
+- 매니저 프로세스가 UDS `accept` 후 `socketpair` + `SCM_RIGHTS`로 워커에게 클라이언트 fd를 전달
+- 워커 프로세스 3개를 서버 시작 시 미리 `fork` (prefork)
+- 라운드 로빈 방식으로 워커를 선택하여 작업 분배
+- 워커는 전달받은 fd로 URL을 읽고 동적 HTML을 생성하여 응답
+
 ## 프로젝트 구조
 
 ```
 network_assignment/
 ├── webserver.c          # 멀티스레드 웹 서버 (UDS 클라이언트)
-├── web_app_server.c     # UDS 기반 동적 HTML 생성 서버
+├── web_app_server.c     # UDS 기반 동적 HTML 생성 서버 (매니저 + 워커 3개)
 ├── Makefile             # 빌드 설정 파일
 ├── htdocs/
 │   └── index.html       # 클라이언트에 전달할 HTML 파일
-├── HTTP_request.md      # HTTP 요청 메시지 예시
+├── HTTP_request.md      # HTTP 요청/응답 구조 및 예시
 └── README.md
 ```
 
