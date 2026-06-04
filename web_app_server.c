@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <signal.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <sys/un.h>
@@ -11,21 +12,53 @@
 #define MAXLINE 1024
 #define WORKER_NUM 3
 
+// 시그널 핸들러에서 접근해야 하므로 전역 변수로 선언
+int g_listen_sock;
+int g_manager_fd[WORKER_NUM];
+pid_t g_pids[WORKER_NUM];
+
+// SIGINT, SIGTERM 시그널 핸들러
+// 매니저가 종료 시그널을 받으면 워커들을 정리하고 소켓 파일을 삭제한다.
+void cleanup_handler(int sig){
+    // 워커 프로세스들에게 SIGTERM 전송 후 종료 대기
+    for(int i = 0; i < WORKER_NUM; i++){
+        if(g_pids[i] > 0){
+            kill(g_pids[i], SIGTERM);
+        }
+    }
+    for(int i = 0; i < WORKER_NUM; i++){
+        if(g_pids[i] > 0){
+            waitpid(g_pids[i], NULL, 0);
+        }
+    }
+
+    // 매니저-워커 간 socketpair 닫기
+    for(int i = 0; i < WORKER_NUM; i++){
+        close(g_manager_fd[i]);
+    }
+
+    // 리슨 소켓 닫기 및 소켓 파일 삭제
+    close(g_listen_sock);
+    unlink(UDS_PATH);
+
+    exit(0);
+}
+
 int main(void){
-    int listen_sock;
     struct sockaddr_un addr;
 
-    // manager_fd[i] : 매니저가 워커 i에게 fd를 보낼 때 쓰는 소켓
-    // worker_fd[i]  : 워커 i가 매니저로부터 fd를 받을 때 쓰는 소켓
-    int manager_fd[WORKER_NUM];
+    // worker_fd[i] : 워커 i가 매니저로부터 fd를 받을 때 쓰는 소켓
     int worker_fd[WORKER_NUM];
-    pid_t pids[WORKER_NUM];
+
+    // SIGINT(Ctrl+C), SIGTERM 시그널 핸들러 등록
+    signal(SIGINT, cleanup_handler);
+    signal(SIGTERM, cleanup_handler);
 
     // 기존 소켓 삭제.
     unlink(UDS_PATH);
 
     // UDS 리슨 소켓 생성.
-    if((listen_sock = socket(AF_UNIX, SOCK_STREAM, 0)) < 0){
+    if((g_listen_sock = socket(AF_UNIX, SOCK_STREAM, 0)) < 0){
         perror("UDS socket fail");
         exit(1);
     }
@@ -36,13 +69,13 @@ int main(void){
     strncpy(addr.sun_path, UDS_PATH, sizeof(addr.sun_path) - 1);
 
     // 소켓과 소켓 주소 구조체 묶기
-    if(bind(listen_sock, (struct sockaddr *)&addr, sizeof(addr)) < 0){
+    if(bind(g_listen_sock, (struct sockaddr *)&addr, sizeof(addr)) < 0){
         perror("UDS bind fail");
         exit(1);
     }
 
     // 5개까지 대기.
-    if(listen(listen_sock, 5) < 0){
+    if(listen(g_listen_sock, 5) < 0){
         perror("UDS listen fail");
         exit(1);
     }
@@ -55,8 +88,8 @@ int main(void){
             perror("socketpair fail");
             exit(1);
         }
-        manager_fd[i] = pair[0]; // 매니저가 사용
-        worker_fd[i] = pair[1];  // 워커가 사용
+        g_manager_fd[i] = pair[0]; // 매니저가 사용
+        worker_fd[i] = pair[1];   // 워커가 사용
 
         pid_t pid = fork();
         if(pid < 0){
@@ -68,12 +101,15 @@ int main(void){
             // ===== 워커 프로세스 영역 =====
 
             // 워커는 매니저용 소켓과 리슨 소켓이 필요 없으므로 닫음.
-            close(listen_sock);
-            close(manager_fd[i]);
+            close(g_listen_sock);
+            close(g_manager_fd[i]);
             // 다른 워커의 매니저 소켓도 닫음.
             for(int j = 0; j < i; j++){
-                close(manager_fd[j]);
+                close(g_manager_fd[j]);
             }
+
+            // 워커는 SIGINT를 무시 (매니저가 cleanup에서 SIGTERM을 보내므로)
+            signal(SIGINT, SIG_IGN);
 
             // 워커는 무한 루프를 돌면서 매니저로부터 fd를 받아 처리.
             while(1){
@@ -133,7 +169,7 @@ int main(void){
 
         // ===== 매니저 프로세스 영역 =====
         // 매니저는 워커용 소켓이 필요 없으므로 닫음.
-        pids[i] = pid;
+        g_pids[i] = pid;
         close(worker_fd[i]);
     }
 
@@ -142,7 +178,7 @@ int main(void){
 
     while(1){
         // 클라이언트(webserver)와 통신하는 소켓 생성.
-        int accp_sock = accept(listen_sock, NULL, NULL);
+        int accp_sock = accept(g_listen_sock, NULL, NULL);
         if(accp_sock < 0){
             continue;
         }
@@ -169,13 +205,13 @@ int main(void){
         memcpy(CMSG_DATA(cmsg), &accp_sock, sizeof(int));
 
         // 라운드 로빈으로 워커 선택 후 fd 전송
-        sendmsg(manager_fd[current_worker], &msg, 0);
+        sendmsg(g_manager_fd[current_worker], &msg, 0);
         current_worker = (current_worker + 1) % WORKER_NUM;
 
         // 매니저는 fd를 워커에게 넘겼으므로 자신의 accp_sock은 닫음.
         close(accp_sock);
     }
 
-    close(listen_sock);
+    close(g_listen_sock);
     return 0;
 }
