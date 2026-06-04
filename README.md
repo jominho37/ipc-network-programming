@@ -59,6 +59,19 @@ URL에 쿼리 스트링(`?`)이 포함된 경우, UDS(Unix Domain Socket)를 통
   - socketpair, 리슨 소켓 닫기 및 UDS 소켓 파일(`/tmp/dynamic_html_create.sock`) 삭제
   - 워커는 `SIGINT`를 무시하고 매니저의 `SIGTERM`으로만 종료
 
+---
+
+# Version 5 : 공유메모리 + 세마포어 기반 워커 상태 관리 및 자동 재생성
+
+라운드 로빈 대신 공유메모리(`mmap`) + 세마포어(`sem_t`)로 워커 상태를 관리하고, 죽은 워커를 자동 재생성한다.
+
+- 워커 상태 정의 : `WORKER_IDLE(0)` / `WORKER_BUSY(1)` / `WORKER_DEAD(2)`
+- 공유메모리(`mmap`, `MAP_SHARED | MAP_ANONYMOUS`)에 워커 상태 배열 + 세마포어를 저장
+- 매니저가 `accept` 후 세마포어로 공유메모리를 보호하면서 `WORKER_IDLE` 워커를 탐색하여 fd 전달
+- `SIGCHLD` 핸들러 : 워커 비정상 종료 시 `waitpid(WNOHANG)`로 감지하여 `WORKER_DEAD`로 기록
+- 매니저 루프에서 `WORKER_DEAD` 워커를 발견하면 새 `socketpair` + `fork()`로 자동 재생성
+- cleanup 시 세마포어 파괴(`sem_destroy`) 및 공유메모리 해제(`munmap`) 추가
+
 ## 프로젝트 구조
 
 ```
