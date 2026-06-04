@@ -54,6 +54,10 @@ URL에 쿼리 스트링(`?`)이 포함된 경우, UDS(Unix Domain Socket)를 통
 - 워커 프로세스 3개를 서버 시작 시 미리 `fork` (prefork)
 - 라운드 로빈 방식으로 워커를 선택하여 작업 분배
 - 워커는 전달받은 fd로 URL을 읽고 동적 HTML을 생성하여 응답
+- 시그널 처리 및 cleanup
+  - `SIGINT`(Ctrl+C) / `SIGTERM` 수신 시 매니저가 워커에게 `SIGTERM` 전송 후 `waitpid`로 종료 대기
+  - socketpair, 리슨 소켓 닫기 및 UDS 소켓 파일(`/tmp/dynamic_html_create.sock`) 삭제
+  - 워커는 `SIGINT`를 무시하고 매니저의 `SIGTERM`으로만 종료
 
 ## 프로젝트 구조
 
