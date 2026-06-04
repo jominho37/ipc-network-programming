@@ -1,11 +1,13 @@
 CC = gcc
 CFLAGS = -Wall
-TARGET = webserver
 
-all: $(TARGET)
+all: webserver web_app_server
 
-$(TARGET): webserver.c
-	$(CC) $(CFLAGS) -o $(TARGET) webserver.c
+webserver: webserver.c
+	$(CC) $(CFLAGS) -o webserver webserver.c -lpthread
+
+web_app_server: web_app_server.c
+	$(CC) $(CFLAGS) -o web_app_server web_app_server.c
 
 clean:
-	rm -f $(TARGET)
+	rm -f webserver web_app_server

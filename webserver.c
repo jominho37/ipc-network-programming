@@ -6,8 +6,10 @@
 #include <netinet/in.h>
 #include <unistd.h>
 #include <pthread.h> // 멀티 스레드 기능을 위해 추가.
+#include <sys/un.h> // UDS를 쓰기 위해 추가.
 
 #define MAXLINE 1024
+#define UDS_PATH "/tmp/dynamic_html_create.sock"
 
 void *read_and_response(void *arg);
 
@@ -133,32 +135,76 @@ void *read_and_response(void *arg){
         }
     }
 
-    // htdocs 폴더 안의 index.html 파일을 읽기 전용으로 연다.
-    FILE *fp = fopen(path, "r");
-    // 파일이 존재한다면
-    if(fp) {
-        // HTTP response 헤더 : 200 상태코드 및 내용 타입(html) 전달
-        char header[] =
-            "HTTP/1.0 200 OK"
-            "\r\nContent-Type: text/html\r\n"
-            "\r\n";
-        write(accp_sock, header, strlen(header));
-        // 512바이트짜리 임시 바구니
-        char file_buf[512];
-        // fp에서 512바이트만큼 읽은 후 전달 -> 성공하면 주소, 실패하면 NULL
-        while(fgets(file_buf, sizeof(file_buf), fp)) {
-            write(accp_sock, file_buf, strlen(file_buf));
+    // URL에 '?'가 포함되어 있다면? 쿼리 스트링이 존재하므로 동적 html처리를 한다. -> UDS 소켓
+    // UDS 소켓은 TCP와 거의 동일하지만 AF_UNIX, sockaddr_un, ... 이름이 달라지고 포트번호가 아닌 파일 경로로 소통한다.
+    // webserver.c는 UDP에서 클라이언트로서 동적 html 처리를 요청한다.
+    if(strchr(url, '?') != NULL){
+        int uds_fd = socket(AF_UNIX, SOCK_STREAM, 0);
+        struct sockaddr_un uds_addr;
+
+        // 소켓 주소 구조체 초기화
+        memset(&uds_addr, 0, sizeof(uds_addr));
+        uds_addr.sun_family = AF_UNIX;
+        // IP와 포트번호 대신에 파일 경로를 씀.
+        strncpy(uds_addr.sun_path, UDS_PATH, sizeof(uds_addr.sun_path) - 1);
+
+        if(connect(uds_fd,(struct sockaddr *)&uds_addr, sizeof(uds_addr))>=0){
+            write(uds_fd, url, strlen(url));
+
+            // 연결이 잘 되었으므로 정상 HTTP 헤더 송신
+            char header[] = 
+                "HTTP/1.0 200 OK\r\n"
+                "Content-Type: text/html; charset=UTF-8\r\n"
+                "\r\n";
+            write(accp_sock, header, strlen(header));
+
+            // 본문 수신
+            char uds_buf[512];
+            int read_bytes_num;
+            while((read_bytes_num = read(uds_fd, uds_buf, sizeof(uds_buf)))>0){
+                write(accp_sock, uds_buf, read_bytes_num);
+            }
+            close(uds_fd);
         }
-        // 파일 닫기
-        fclose(fp);
+        else{
+            // 연결이 안 된 경우 내부 시스템에 문제가 있는 것이므로 500에러를 내보낸다.
+            char header_500[] = 
+                "HTTP/1.0 500 Internal Server Error\r\n"
+                "Content-Type: text/html; charset=UTF-8\r\n"
+                "\r\n"
+                "<html><body><h1>500 Internal Server Error</h1></body></html>";
+            write(accp_sock, header_500, strlen(header_500));
+        }
+
     }
     else{
-        char header_404[] =
-            "HTTP/1.0 404 NOT FOUND\r\n"
-            "Content-Type: text/html\r\n"
-            "\r\n"
-            "<html><body><h1>404 Not Found</h1></body></html>";
-        write(accp_sock, header_404, strlen(header_404));
+        // htdocs 폴더 안의 index.html 파일을 읽기 전용으로 연다.
+        FILE *fp = fopen(path, "r");
+        // 파일이 존재한다면
+        if(fp) {
+            // HTTP response 헤더 : 200 상태코드 및 내용 타입(html) 전달
+            char header[] =
+                "HTTP/1.0 200 OK"
+                "\r\nContent-Type: text/html\r\n"
+                "\r\n";
+            write(accp_sock, header, strlen(header));
+            // 512바이트짜리 임시 바구니
+            char file_buf[512];
+            // fp에서 512바이트만큼 읽은 후 전달 -> 성공하면 주소, 실패하면 NULL
+            while(fgets(file_buf, sizeof(file_buf), fp)) {
+                write(accp_sock, file_buf, strlen(file_buf));
+            }
+            // 파일 닫기
+            fclose(fp);
+        }
+        else{
+            char header_404[] =
+                "HTTP/1.0 404 NOT FOUND\r\n"
+                "Content-Type: text/html\r\n"
+                "\r\n"
+                "<html><body><h1>404 Not Found</h1></body></html>";
+            write(accp_sock, header_404, strlen(header_404));
+        }
     }
 
     close(accp_sock);
